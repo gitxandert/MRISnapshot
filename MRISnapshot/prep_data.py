@@ -61,86 +61,80 @@ def prep_dataset(params):
 
     ## Create a list with underlay and overlay images
     out_list = os.path.join(params.out_dir, 'list_images.csv')
-    if os.path.exists(out_list):
-        logger.warning('  File ' + out_list + ' already exists, skipping.')
+    ## Find underlay images
+    list_ulay = glob.glob(params.in_dir + os.sep + '**' + os.sep + '*' + params.s_ulay, recursive = True)
+    df = pd.DataFrame(data = list_ulay, columns = ['UnderlayImg'])
+    num_all = df.shape[0]
+    logger.info('  Found ' + str(num_all) + ' underlay images in the input folder')
+    
+    ## Read IDs and eliminate duplicates
+    df['ScanID'] = df.UnderlayImg.apply(lambda x : os.path.basename(x).replace(params.s_ulay, ''))
+    df = df.drop_duplicates(subset = 'ScanID')
+    df = df[['ScanID', 'UnderlayImg']]
+
+    ### Eliminate scan if ID is empty
+    if df[df.ScanID == ''].shape[0]:
+        logger.warning('  Removing image with empty ScanID from list: ' + 
+                       df[df.ScanID==''].UnderlayImg.values[0])
+        df = df[df.ScanID != '']
+
+    if df.shape[0] == 0:
+        logger.warning('  No underlay images were found in the input folder. Output image list is empty!')
     else:
-        ## Find underlay images
-        list_ulay = glob.glob(params.in_dir + os.sep + '**' + os.sep + '*' + params.s_ulay, recursive = True)
-        df = pd.DataFrame(data = list_ulay, columns = ['UnderlayImg'])
-        num_all = df.shape[0]
-        logger.info('  Found ' + str(num_all) + ' underlay images in the input folder')
-        
-        ## Read IDs and eliminate duplicates
-        df['ScanID'] = df.UnderlayImg.apply(lambda x : os.path.basename(x).replace(params.s_ulay, ''))
-        df = df.drop_duplicates(subset = 'ScanID')
-        df = df[['ScanID', 'UnderlayImg']]
+        logger.info('  Found ' + str(df.shape[0]) + ' underlay images with unique IDs in the input folder')
 
-        ### Eliminate scan if ID is empty
-        if df[df.ScanID == ''].shape[0]:
-            logger.warning('  Removing image with empty ScanID from list: ' + 
-                           df[df.ScanID==''].UnderlayImg.values[0])
-            df = df[df.ScanID != '']
+        ## Add mask and overlay images
+        df = add_img_names(df, params.in_dir, params.s_mask, 'MaskImg')
+        df = add_img_names(df, params.in_dir, params.s_olay, 'OverlayImg')
+        df = add_img_names(df, params.in_dir, params.s_olay2, 'OverlayImg2')
 
-        if df.shape[0] == 0:
-            logger.warning('  No underlay images were found in the input folder. Output image list is empty!')
-        else:
-            logger.info('  Found ' + str(df.shape[0]) + ' underlay images with unique IDs in the input folder')
-
-            ## Add mask and overlay images
-            df = add_img_names(df, params.in_dir, params.s_mask, 'MaskImg')
-            df = add_img_names(df, params.in_dir, params.s_olay, 'OverlayImg')
-            df = add_img_names(df, params.in_dir, params.s_olay2, 'OverlayImg2')
-
-        ## Create output folder
-        if os.path.exists(params.out_dir) == False:
-            os.makedirs(params.out_dir)
-        
-        ## Create output list
-        df.to_csv(out_list, index=False)
-        logger.info('  Created output list: ' + out_list)
+    ## Create output folder
+    if os.path.exists(params.out_dir) == False:
+        os.makedirs(params.out_dir)
+    
+    ## Create output list
+    df.to_csv(out_list, index=False)
+    logger.info('  Created output list: ' + out_list)
         
     
     ## Create a default configuration file
     out_config = os.path.join(params.out_dir, 'config.csv')
-    if os.path.exists(out_config):
-        logger.warning('  File ' + out_config + ' already exists, skipping.')
-    else:
-        dict_default = {'id_col' : 'ScanID', 
-                        'ulay_col' : 'UnderlayImg', 'mask_col' : 'MaskImg', 
-                        'olay_col' : 'OverlayImg', 'olay_col2' : 'OverlayImg2', 
-                        'sel_vals_olay' : '', 'sel_vals_olay2' : '',
-                        'view_plane' : 'A+S+C',
-                        'num_slice' : 5, 'step_size_slice' : '',
-                        'min_vox' : 1,
-                        'crop_to_mask' : 0,
-                        'crop_to_olay' : 0,
-                        'padding_ratio' : 0,
-                        'bin_olay' : 0,
-                        'segment_olay' : 0,
-                        'num_classes_olay' : 0,
-                        'is_edge' : 1,
-                        'alpha_olay' : 1, 
-                        'perc_high' : 100, 'perc_low' : 0, 
-                        'is_out_single' : 0, 'is_out_noqc' : 0, 
-                        'img_width' : 300,
-                        'label_checkbox1' : 'PASS',
-                        'label_checkbox2' : 'FAIL',
-                        'label_editbox' : 'Notes'}
-        
-        ## Reset default values for missing image types
-        if params.s_mask == None:
-            dict_default['mask_col'] = ''
-        if params.s_olay == None:
-            dict_default['olay_col'] = ''
-        if params.s_olay2 == None:
-            dict_default['olay_col2'] = ''
-        
-        df_config = pd.DataFrame.from_dict(dict_default, orient='index', columns=['ParamValue']).reset_index()
-        df_config.columns = ['ParamName', 'ParamValue']
+    dict_default = {'id_col' : 'ScanID', 
+                    'ulay_col' : 'UnderlayImg', 'mask_col' : 'MaskImg', 
+                    'olay_col' : 'OverlayImg', 'olay_col2' : 'OverlayImg2', 
+                    'sel_vals_olay' : '', 'sel_vals_olay2' : '',
+                    'view_plane' : 'A+S+C',
+                    'num_slice' : 5, 'step_size_slice' : '',
+                    'min_vox' : 1,
+                    'crop_to_mask' : 0,
+                    'crop_to_olay' : 0,
+                    'padding_ratio' : 0,
+                    'bin_olay' : 0,
+                    'segment_olay' : 0,
+                    'num_classes_olay' : 0,
+                    'is_edge' : 1,
+                    'alpha_olay' : 1, 
+                    'perc_high' : 100, 'perc_low' : 0, 
+                    'is_out_single' : 0, 'is_out_noqc' : 0, 
+                    'img_width' : 300,
+                    'label_checkbox1' : 'PASS',
+                    'label_checkbox2' : 'FAIL',
+                    'label_editbox' : 'Notes'}
+    
+    ## Reset default values for missing image types
+    if params.s_mask == None:
+        dict_default['mask_col'] = ''
+    if params.s_olay == None:
+        dict_default['olay_col'] = ''
+    if params.s_olay2 == None:
+        dict_default['olay_col2'] = ''
+    
+    df_config = pd.DataFrame.from_dict(dict_default, orient='index', columns=['ParamValue']).reset_index()
+    df_config.columns = ['ParamName', 'ParamValue']
 
-        ## Create output config file
-        df_config.to_csv(out_config, index=False)
-        logger.info('  Created config file: ' + out_config)
+    ## Create output config file
+    df_config.to_csv(out_config, index=False)
+    logger.info('  Created config file: ' + out_config)
     
 def main():
     """Helper script to prepare input files required for QC report creation.
@@ -199,10 +193,7 @@ def main():
     ## Prepare data
     logger.info('  Preparing image list and configuration file ...')
     prep_dataset(params)
-    
-    
-    
 
-    
-    
-    
+
+if __name__ == "__main__":
+    main()

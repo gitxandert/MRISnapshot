@@ -3,7 +3,6 @@
 
 from setuptools import setup
 import setuptools
-from glob import glob
 from pathlib import Path
 
 this_directory = Path(__file__).parent
@@ -33,9 +32,9 @@ setup(name='mrisnapshot',
             'mrisnapshot_create_report = MRISnapshot.create_report:main',
         ]        
     },    
-    data_files=[
-        ('', glob('MRISnapshot/js_templates/*.js'))
-    ],
+    package_data={
+        'MRISnapshot': ['js_templates/*.js'],
+    },
     classifiers=[
         'Intended Audience :: Science/Research',
         'Programming Language :: Python',

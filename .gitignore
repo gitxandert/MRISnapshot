@@ -57,3 +57,7 @@ Tmp
 .*
 __pycache__
 !.gitignore
+
+# coding agents
+*CLAUDE*
+*AGENTS*

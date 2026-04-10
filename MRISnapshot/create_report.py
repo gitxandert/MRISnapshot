@@ -173,12 +173,21 @@ def copy_js(path_utils, out_dir):
     :param path_utils: Path to js template files
     :param out_dir: Output folder
     '''
-    try:        
-        shutil.copy(os.path.join(path_utils, 'misc_func.js'), out_dir)
-        shutil.copy(os.path.join(path_utils, 'shortcut.js'), out_dir)
-        shutil.copy(os.path.join(path_utils, 'load_back.js'), out_dir)
-    except:
-        sys.exit("\nERROR: Could not copy template .js files to output directory " + out_dir + '\n');
+    template_files = ['misc_func.js', 'shortcut.js', 'load_back.js']
+    for template_file in template_files:
+        src = os.path.join(path_utils, template_file)
+        try:
+            shutil.copy(src, out_dir)
+        except Exception as exc:
+            sys.exit(
+                "\nERROR: Could not copy template .js file "
+                + src
+                + " to output directory "
+                + out_dir
+                + ": "
+                + str(exc)
+                + '\n'
+            )
 
 def read_and_check_images(df_images, params, sub_index, orient = 'LPS'):
     ''' Read underlay, mask and overlay image names for a subject from a dataframe, 
@@ -224,6 +233,13 @@ def read_and_check_images(df_images, params, sub_index, orient = 'LPS'):
                     return qc_ok_flag, qc_msg, nii_out, fnames_out
 
                 try:
+                    img_shape = nii.shape
+                    if len(img_shape) != 3:
+                        qc_ok_flag = 0
+                        qc_msg = 'Unsupported ' + col_name + ' image dimensions ' + str(img_shape) + ' (expected 3D image)'
+                        logger.warning('   ' + qc_msg + ', subject discarded!')
+                        return qc_ok_flag, qc_msg, nii_out, fnames_out
+
                     orig_ornt = nib.io_orientation(nii.affine)
                     targ_ornt = axcodes2ornt(orient)
                     if np.all(orig_ornt == targ_ornt) == False:
@@ -618,43 +634,36 @@ def create_snapshots(params, df_images, dir_snapshots_full, out_dir):
     
     num_images = df_images.shape[0]
     
-    ### Snapshots were already extracted, use saved snapshots and meta-data
     fname_img_info_all = os.path.join(dir_snapshots_full, 'img_info_all.pickle')
-    if os.path.isfile(fname_img_info_all):
-        logger.info('  File ' + fname_img_info_all + ' already exists, ' +
-                    ' skipping extraction of snapshots')
-        logger.warning('  Pre-saved data may be incomplete or incorrect. Please delete ' + 
-                       'the complete QCReport output folder and rerun to re-create it')
-        try:
-            img_info_all = pickle.load(open(fname_img_info_all, "rb"))
-        except:
-            sys.exit("\nERROR: Could not read pre-saved data:" + fname_img_info_all + '\n');
+    
+    qc_ok_flag_all = []
+    qc_msg_all = []
 
-    ### Extract snapshots and metadata
-    else:
+    img_info_all = [];
+    for sub_index, sub_id in enumerate(df_images[params.id_col]):
+
+        ## Read images
+        logger.info('    Reading images for subject ' + str(sub_index + 1) + ' / ' + str(num_images) +
+                    ': ' + str(sub_id))
+        qc_ok_flag, qc_msg, nii_all, fname_all = read_and_check_images(df_images, params, 
+                                                                       sub_index, orient = 'LPS')
         
-        qc_ok_flag_all = []
-        qc_msg_all = []
+        ## Save image QC info to record QC fail cases, and report them in a QC csv output file
+        if qc_ok_flag == 0:
+            qc_ok_flag_all.append(qc_ok_flag)
+            qc_msg_all.append(qc_msg)
+        
+        ## Create snapshots if images passed the QC
+        else:
+            [nii_ulay, nii_mask, nii_olay, nii_olay2] = nii_all
+            [fname_ulay, fname_mask, fname_olay, fname_olay2] = fname_all
+            logger.info('      Processing images: ulay=' + str(fname_ulay) +
+                        ', mask=' + str(fname_mask) +
+                        ', olay=' + str(fname_olay) +
+                        ', olay2=' + str(fname_olay2))
 
-        img_info_all = [];
-        for sub_index, sub_id in enumerate(df_images[params.id_col]):
-
-            ## Read images
-            logger.info('    Reading images for subject ' + str(sub_index + 1) + ' / ' + str(num_images))
-            qc_ok_flag, qc_msg, nii_all, fname_all = read_and_check_images(df_images, params, 
-                                                                           sub_index, orient = 'LPS')
-            
-            ## Save image QC info to record QC fail cases, and report them in a QC csv output file
-            if qc_ok_flag == 0:
-                qc_ok_flag_all.append(qc_ok_flag)
-                qc_msg_all.append(qc_msg)
-            
-            ## Create snapshots if images passed the QC
-            else:
-                [nii_ulay, nii_mask, nii_olay, nii_olay2] = nii_all
-                [fname_ulay, fname_mask, fname_olay, fname_olay2] = fname_all
-
-                ## Select values on overlay images
+            ## Select values on overlay images
+            try:
                 if len(params.sel_vals_olay) > 0:
                     nii_olay = sel_vals_nifti(nii_olay, params.sel_vals_olay)
                 if len(params.sel_vals_olay2) > 0:
@@ -732,32 +741,45 @@ def create_snapshots(params, df_images, dir_snapshots_full, out_dir):
                                     'snapshot_caption_all' : snapshot_caption_all}
                         
                     img_info_all.append(snapshot_info)
+            except ValueError as exc:
+                if len(qc_ok_flag_all) <= sub_index:
+                    qc_ok_flag_all.append(0)
+                    qc_msg_all.append('ValueError while processing subject ' + str(sub_id) + ': ' + str(exc))
+                else:
+                    qc_ok_flag_all[-1] = 0
+                    qc_msg_all[-1] = 'ValueError while processing subject ' + str(sub_id) + ': ' + str(exc)
+                logger.warning('   ValueError while processing subject ' + str(sub_id) +
+                               ' (ulay=' + str(fname_ulay) +
+                               ', mask=' + str(fname_mask) +
+                               ', olay=' + str(fname_olay) +
+                               ', olay2=' + str(fname_olay2) +
+                               '): ' + str(exc) + ', subject discarded!')
 
-        ## Save meta-data for the extracted snapshots to a pickle file
-        pickle.dump(img_info_all, open( fname_img_info_all, "wb" ) )
+    ## Save meta-data for the extracted snapshots to a pickle file
+    pickle.dump(img_info_all, open( fname_img_info_all, "wb" ) )
 
-        logger.info('  Created snapshots for ' + str(len(img_info_all)) + ' subjects')
+    logger.info('  Created snapshots for ' + str(len(img_info_all)) + ' subjects')
 
-        ## Create and save output QC dataframe for image information
-        df_qc_images = pd.DataFrame(data = {'ScanID' : df_images.ScanID.tolist(), 
-                                            'qc_ok_flag' : qc_ok_flag_all,
-                                            'qc_message' : qc_msg_all}, columns=['ScanID', 'qc_ok_flag', 'qc_message'])
+    ## Create and save output QC dataframe for image information
+    df_qc_images = pd.DataFrame(data = {'ScanID' : df_images.ScanID.tolist(), 
+                                        'qc_ok_flag' : qc_ok_flag_all,
+                                        'qc_message' : qc_msg_all}, columns=['ScanID', 'qc_ok_flag', 'qc_message'])
+    
+    #df_qc_images = 
+    #df_images[['ScanID']].copy()
+    #df_qc_images['qc_ok_flag'] = qc_ok_flag_all
+    #df_qc_images['qc_message'] = qc_msg_all
+    try:
+        fname_out = os.path.join(out_dir, 'log_qc_images_all.csv')
+        df_qc_images.to_csv(fname_out, index = False)
+        logger.info('  QC log saved to: ' + fname_out)
         
-        #df_qc_images = 
-        #df_images[['ScanID']].copy()
-        #df_qc_images['qc_ok_flag'] = qc_ok_flag_all
-        #df_qc_images['qc_message'] = qc_msg_all
-        try:
-            fname_out = os.path.join(out_dir, 'log_qc_images_all.csv')
-            df_qc_images.to_csv(fname_out, index = False)
-            logger.info('  QC log saved to: ' + fname_out)
-            
-            fname_out = os.path.join(out_dir, 'log_qc_images_fail.csv')
-            df_qc_images[df_qc_images.qc_ok_flag == 0].to_csv(fname_out, index = False)
-            logger.info('  QC log for failed subjects saved to: ' + fname_out)
+        fname_out = os.path.join(out_dir, 'log_qc_images_fail.csv')
+        df_qc_images[df_qc_images.qc_ok_flag == 0].to_csv(fname_out, index = False)
+        logger.info('  QC log for failed subjects saved to: ' + fname_out)
 
-        except:
-            logger.warning('  Could not save QC log files for img reading: ' + fname_out)
+    except:
+        logger.warning('  Could not save QC log files for img reading: ' + fname_out)
 
     return img_info_all
 
@@ -912,9 +934,6 @@ def create_report(list_file, config_file, out_dir):
 
     ### Check output file
     out_report = os.path.join(out_dir, 'qcreport.html')
-    if os.path.exists(out_report):
-        logger.warning('  Output report ' + out_report + ' already exists, skipping.')
-        sys.exit();
 
     ## Read input file list
     logger.info('  Reading image list from: ' + list_file)
@@ -1031,5 +1050,7 @@ def main():
 
     ## Create report
     create_report(list_file, config_file, report_dir)
-    
-    
+
+
+if __name__ == "__main__":
+    main()
