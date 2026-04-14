@@ -22,6 +22,65 @@ from nibabel.orientations import axcodes2ornt, ornt_transform, inv_ornt_aff
 import MRISnapshot.utils.mylogger as mylogger
 logger = mylogger.logger
 
+
+def parse_label_color_map(raw_value):
+    '''Parse label color mappings from config text.
+
+    Expected format: "1:#ffcc00+2:#ff3b30+3:#00bcd4"
+
+    :param raw_value: Raw config string
+    :return: Dict[label:int] = (r, g, b)
+    '''
+
+    color_map = {}
+    if raw_value == '':
+        return color_map
+
+    for item in raw_value.split('+'):
+        if item == '':
+            continue
+
+        parts = item.split(':', 1)
+        if len(parts) != 2:
+            raise ValueError('Invalid label color mapping item: ' + item)
+
+        label_str, color_str = parts
+        try:
+            label = int(label_str)
+        except ValueError as exc:
+            raise ValueError('Invalid overlay label in color mapping: ' + label_str) from exc
+
+        if color_str.startswith('#'):
+            color_str = color_str[1:]
+
+        if len(color_str) != 6:
+            raise ValueError('Invalid RGB hex color for label ' + str(label) + ': ' + parts[1])
+
+        try:
+            rgb = tuple(int(color_str[i:i+2], 16) for i in (0, 2, 4))
+        except ValueError as exc:
+            raise ValueError('Invalid RGB hex color for label ' + str(label) + ': ' + parts[1]) from exc
+
+        color_map[label] = rgb
+
+    return color_map
+
+
+def parse_rgb_color(raw_value, param_name):
+    '''Parse a single RGB hex color from config text.'''
+
+    if raw_value == '':
+        return None
+
+    color_str = raw_value[1:] if raw_value.startswith('#') else raw_value
+    if len(color_str) != 6:
+        raise ValueError('Invalid RGB hex color for ' + param_name + ': ' + raw_value)
+
+    try:
+        return tuple(int(color_str[i:i+2], 16) for i in (0, 2, 4))
+    except ValueError as exc:
+        raise ValueError('Invalid RGB hex color for ' + param_name + ': ' + raw_value) from exc
+
 def parse_config(df_conf, list_col_names):
     '''Read config list and check params
 
@@ -50,17 +109,18 @@ def parse_config(df_conf, list_col_names):
     
     ## Create dataframe with default values
     cols_default = ['id_col', 'ulay_col', 'mask_col', 'olay_col', 'olay_col2', 'sel_vals_olay', 
-                    'sel_vals_olay2', 'view_plane', 'num_slice', 'step_size_slice',
+                    'sel_vals_olay2', 'view_plane', 'num_slice', 'step_size_slice', 'outside_slice_margin',
                     'min_vox', 'crop_to_mask', 'crop_to_olay', 'padding_ratio', 'bin_olay', 
                     'segment_olay', 'num_classes_olay',
-                    'is_edge', 'alpha_olay', 'perc_high', 'perc_low', 
+                    'is_edge', 'is_edge_olay', 'is_edge_olay2', 'alpha_olay', 'perc_high', 'perc_low',
+                    'olay_color', 'olay2_label_colors',
                     'is_out_single', 'is_out_noqc', 'img_width',
                     'label_checkbox1', 'label_checkbox2', 'label_editbox']
     vals_default = ['', '', '', '', '', '', 
-                    '', 'A', '4', '',
+                    '', 'A', '4', '', '1',
                     '1', '0', '0', '', '1',
                     '0', '0',
-                    '1', '1', '99', '1', 
+                    '1', '', '', '1', '99', '1', '#0066ff', '',
                     '1', '0', '300',
                     'PASS', 'FAIL', 'Notes']
     
@@ -106,20 +166,35 @@ def parse_config(df_conf, list_col_names):
     params.sel_vals_olay2 = [int(n) for n in params.sel_vals_olay2.split('+') if n != '']
 
     ### Convert numeric args from str to int or float
-    for tmp_arg in ['num_slice', 'step_size_slice', 'min_vox', 'crop_to_mask', 'crop_to_olay', 'bin_olay',
+    for tmp_arg in ['num_slice', 'step_size_slice', 'outside_slice_margin', 'min_vox', 'crop_to_mask', 'crop_to_olay', 'bin_olay',
                     'segment_olay', 'num_classes_olay',
-                    'is_edge', 'is_out_single', 'is_out_noqc', 'img_width']:
+                    'is_edge', 'is_edge_olay', 'is_edge_olay2', 'is_out_single', 'is_out_noqc', 'img_width']:
         if params[tmp_arg] != '':
             params[tmp_arg] = int(params[tmp_arg])
         
     for tmp_arg in ['alpha_olay', 'perc_high', 'perc_low', 'padding_ratio']:
         if params[tmp_arg] != '':
             params[tmp_arg] = float(params[tmp_arg])
+
+    try:
+        params['olay2_label_colors_parsed'] = parse_label_color_map(params.olay2_label_colors)
+    except ValueError as exc:
+        sys.exit("\nERROR: Invalid olay2_label_colors value: " + str(exc) + '\n')
+    try:
+        parsed_olay_color = parse_rgb_color(params.olay_color, 'olay_color')
+        params['olay_color_parsed'] = parsed_olay_color if parsed_olay_color is not None else (0, 102, 255)
+    except ValueError as exc:
+        sys.exit("\nERROR: " + str(exc) + '\n')
+
+    if params.is_edge_olay == '':
+        params.is_edge_olay = params.is_edge
+    if params.is_edge_olay2 == '':
+        params.is_edge_olay2 = params.is_edge
     
     ### Correct inconsistent parameters
-    if (params.is_edge == 1) & (params.alpha_olay != 1):
+    if ((params.is_edge == 1) or (params.is_edge_olay == 1) or (params.is_edge_olay2 == 1)) & (params.alpha_olay != 1):
         params.alpha_olay = 1
-        logger.warning('    Parameter alpha_olay is set to 1, because is_edge was set to 1')
+        logger.warning('    Parameter alpha_olay is set to 1, because overlay edge mode was enabled')
 
     ### Correct inconsistent parameters
     if (params.segment_olay == 1):
@@ -132,8 +207,11 @@ def parse_config(df_conf, list_col_names):
         if params.is_edge == 0:
             params.is_edge = 1
             logger.warning('    Parameter is_edge is set to 1, because segment_olay was set to 1')
+        if params.is_edge_olay2 == 0:
+            params.is_edge_olay2 = 1
+            logger.warning('    Parameter is_edge_olay2 is set to 1, because segment_olay was set to 1')
         params.alpha_olay = 1
-        logger.warning('    Parameter alpha_olay is set to 1, because is_edge was set to 1')
+        logger.warning('    Parameter alpha_olay is set to 1, because overlay edge mode was enabled')
 
     return params
 
@@ -207,7 +285,7 @@ def read_and_check_images(df_images, params, sub_index, orient = 'LPS'):
     col_names = [params.ulay_col, params.mask_col, params.olay_col, params.olay_col2]
     qc_ok_flag = 1
     qc_msg = 'PASS'
-    ref_affine = []         ## Check that all images have the same affine (in the same space)
+    ref_affine = None       ## Check that all images have the same affine (in the same space)
     
     ## Read and check each image 
     for i, col_name in enumerate(col_names):
@@ -245,7 +323,7 @@ def read_and_check_images(df_images, params, sub_index, orient = 'LPS'):
                     if np.all(orig_ornt == targ_ornt) == False:
                         transform = ornt_transform(orig_ornt, targ_ornt)
                         nii = nii.as_reoriented(transform)
-                    if ref_affine == []:
+                    if ref_affine is None:
                         ref_affine = nii.affine
                     else:
 
@@ -295,7 +373,72 @@ def get_img_mat(nii, orient = 'LPS'):
     #slices = [50, 70, 90, 110, 130, 150]      ## FIXME
     #return slices
 
-def calc_sel_slices(img_ulay, img_mask, img_olay, img_olay2, params, sub_index, sub_id):
+def _get_slice_selection_mask(img_ulay, img_mask, img_olay, img_olay2):
+    '''Create the foreground mask used for slice selection.'''
+
+    if img_mask is not None:
+        return (img_mask > 0).astype(int)
+
+    if img_olay is not None:
+        if img_olay2 is not None:
+            img_olay = img_olay + img_olay2
+        return (img_olay > 0).astype(int)
+
+    return (img_ulay > 0).astype(int)
+
+
+def _pick_closest_slice(slice_indices, extents, target_extent):
+    '''Pick the slice whose extent is closest to the target extent.'''
+
+    if slice_indices.size == 0:
+        return None
+
+    extent_diff = np.abs(extents[slice_indices] - target_extent)
+    return int(slice_indices[np.argmin(extent_diff)])
+
+
+def _select_axial_tumor_slices(nz_mask, params):
+    '''Select axial slices around the tumor defined by the mask image.'''
+
+    slice_extents = np.sum(nz_mask, axis=(0, 1))
+    all_slices = np.arange(slice_extents.shape[0])
+    valid_slices = np.where(slice_extents >= params.min_vox)[0]
+    if valid_slices.size <= 1:
+        return valid_slices
+
+    valid_extents = slice_extents[valid_slices]
+    max_slice = int(valid_slices[np.argmax(valid_extents)])
+    max_extent = slice_extents[max_slice]
+    target_extent = 0.2 * max_extent
+
+    slices_above = valid_slices[valid_slices > max_slice]
+    slices_below = valid_slices[valid_slices < max_slice]
+
+    above_20 = _pick_closest_slice(slices_above, slice_extents, target_extent)
+    below_20 = _pick_closest_slice(slices_below, slice_extents, target_extent)
+
+    tumor_slices = np.where(slice_extents > 0)[0]
+    tumor_lower = int(tumor_slices[0])
+    tumor_upper = int(tumor_slices[-1])
+    margin = max(int(params.outside_slice_margin), 1)
+
+    outside_above_candidates = all_slices[all_slices >= tumor_upper + margin]
+    outside_below_candidates = all_slices[all_slices <= tumor_lower - margin]
+
+    outside_above = int(outside_above_candidates[0]) if outside_above_candidates.size > 0 else None
+    outside_below = int(outside_below_candidates[-1]) if outside_below_candidates.size > 0 else None
+
+    selected = []
+    for slice_index in [max_slice, above_20, below_20, outside_above, outside_below]:
+        if slice_index is None:
+            continue
+        if slice_index not in selected:
+            selected.append(slice_index)
+
+    return np.array(selected, dtype=int)
+
+
+def calc_sel_slices(img_ulay, img_mask, img_olay, img_olay2, params, sub_index, sub_id, curr_view):
     '''Select slices that will be used to create snapshots
     
     :param img_ulay: Underlay image
@@ -308,16 +451,7 @@ def calc_sel_slices(img_ulay, img_mask, img_olay, img_olay2, params, sub_index, 
     
     :return ind_sel: A list of indices for selected slices
     '''
-    ## Create non-zero mask
-    if img_mask is not None:
-        nz_mask = (img_mask > 0).astype(int)
-    else:
-        if img_olay is not None:
-            if img_olay2 is not None:
-                img_olay = img_olay + img_olay2
-            nz_mask = (img_olay > 0).astype(int)
-        else:
-            nz_mask = (img_ulay > 0).astype(int)
+    nz_mask = _get_slice_selection_mask(img_ulay, img_mask, img_olay, img_olay2)
 
     ## Detect indices of non-zero slices
     ind_nz = np.where(np.sum(nz_mask, axis = (0, 1)) >= params.min_vox)[0]
@@ -326,6 +460,9 @@ def calc_sel_slices(img_ulay, img_mask, img_olay, img_olay2, params, sub_index, 
     sl_sel = ind_nz
     if num_nz <= 1:       ## 0 or 1 slice to select
         return sl_sel
+
+    if curr_view == 'A' and img_mask is not None:
+        return _select_axial_tumor_slices(nz_mask, params)
         
     ## Select slices based on params.step_size_slice
     if params.step_size_slice != '':
@@ -448,8 +585,16 @@ def extract_snapshot(img_ulay, img_olay, img_olay2, params, curr_view, curr_slic
         img2d_olay = img_olay[:,:,curr_slice].astype(float)
         img2d_olay2 = img_olay2[:,:,curr_slice].astype(float)
 
-        pil_under, pil_fused = imolay.overlayImageDouble(img2d_ulay, img2d_olay, img2d_olay2, 
-                                                         params.alpha_olay, params.is_edge)
+        pil_under, pil_fused = imolay.overlayImageDouble(
+            img2d_ulay,
+            img2d_olay,
+            img2d_olay2,
+            params.alpha_olay,
+            params.is_edge_olay,
+            params.is_edge_olay2,
+            params.olay_color_parsed,
+            params.olay2_label_colors_parsed,
+        )
         pil_under.convert('RGB').save(os.path.join(dir_snapshots_full,snapshot_name + '.png'))
         pil_fused.convert('RGB').save(os.path.join(dir_snapshots_full,snapshot_name + '_olay.png'))
 
@@ -720,7 +865,7 @@ def create_snapshots(params, df_images, dir_snapshots_full, out_dir):
                             
                         ### Select slices to show
                         list_sel_slices = calc_sel_slices(img3d_ulay, img3d_mask, img3d_olay, 
-                                                        img3d_olay2, params, sub_index, sub_id)
+                                                        img3d_olay2, params, sub_index, sub_id, curr_view)
                         logger.info('      Selected slices in view ' + str(curr_view) + ' : ' + str(list_sel_slices))
                         
                         for slice_index, curr_slice in enumerate(list_sel_slices):
