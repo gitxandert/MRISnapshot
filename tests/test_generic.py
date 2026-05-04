@@ -20,7 +20,7 @@ import nibabel as nib
 import numpy as np
 import pandas as pd
 
-from MRISnapshot.create_report import calc_sel_slices, parse_config, read_and_check_images
+from MRISnapshot.create_report import calc_sel_slices, extract_snapshot, parse_config, read_and_check_images
 from MRISnapshot.prep_data import prep_data
 from MRISnapshot.utils.img_overlays import overlayImageDouble
     
@@ -196,7 +196,7 @@ def test_calc_sel_slices_axial_uses_tumor_centered_scheme():
         'A',
     )
 
-    assert selected.tolist() == [4, 5, 3, 7, 1]
+    assert selected.tolist() == [1, 3, 4, 5, 7]
 
 
 def test_calc_sel_slices_axial_respects_outside_slice_margin():
@@ -220,7 +220,7 @@ def test_calc_sel_slices_axial_respects_outside_slice_margin():
         'A',
     )
 
-    assert selected.tolist() == [3, 4, 2, 8, 0]
+    assert selected.tolist() == [0, 2, 3, 4, 8]
 
 
 def test_calc_sel_slices_axial_deduplicates_when_targets_overlap():
@@ -245,14 +245,62 @@ def test_calc_sel_slices_axial_deduplicates_when_targets_overlap():
     assert selected.tolist() == [2, 3, 4]
 
 
-def test_calc_sel_slices_non_axial_keeps_existing_spacing_logic():
+def test_calc_sel_slices_sagittal_mask_uses_tumor_centered_scheme():
+    img_ulay = np.ones((4, 4, 10), dtype=int)
+    img_mask = np.zeros((4, 4, 10), dtype=int)
+
+    img_mask[0, 0, 2] = 1
+    img_mask[0:4, 0:3, 3] = 1
+    img_mask[0:4, 0:4, 4] = 1
+    img_mask[0:2, 0:2, 5] = 1
+    img_mask[0, 0, 6] = 1
+
+    selected = calc_sel_slices(
+        img_ulay,
+        img_mask,
+        None,
+        None,
+        _slice_params(),
+        0,
+        'subj',
+        'S',
+    )
+
+    assert selected.tolist() == [1, 3, 4, 5, 7]
+
+
+def test_calc_sel_slices_coronal_mask_uses_tumor_centered_scheme():
+    img_ulay = np.ones((4, 4, 10), dtype=int)
+    img_mask = np.zeros((4, 4, 10), dtype=int)
+
+    img_mask[0, 0, 2] = 1
+    img_mask[0:4, 0:3, 3] = 1
+    img_mask[0:4, 0:4, 4] = 1
+    img_mask[0:2, 0:2, 5] = 1
+    img_mask[0, 0, 6] = 1
+
+    selected = calc_sel_slices(
+        img_ulay,
+        img_mask,
+        None,
+        None,
+        _slice_params(),
+        0,
+        'subj',
+        'C',
+    )
+
+    assert selected.tolist() == [1, 3, 4, 5, 7]
+
+
+def test_calc_sel_slices_non_axial_without_mask_keeps_existing_spacing_logic():
     img_ulay = np.ones((4, 4, 10), dtype=int)
     img_mask = np.zeros((4, 4, 10), dtype=int)
     img_mask[:, :, 1:9] = 1
 
     selected = calc_sel_slices(
         img_ulay,
-        img_mask,
+        None,
         None,
         None,
         _slice_params(num_slice=4),
@@ -262,6 +310,47 @@ def test_calc_sel_slices_non_axial_keeps_existing_spacing_logic():
     )
 
     assert selected.tolist() == [2, 4, 5, 7]
+
+
+def test_extract_snapshot_keeps_numeric_names_for_axial_masked_views(tmp_path):
+    img_ulay = np.arange(16, dtype=float).reshape(4, 4, 1)
+    params = SimpleNamespace(
+        num_olay=0,
+        alpha_olay=1,
+        is_edge=0,
+        is_edge_olay=0,
+        is_edge_olay2=0,
+        olay_color_parsed=(0, 102, 255),
+        olay2_label_colors_parsed={},
+    )
+
+    _, axial_name = extract_snapshot(
+        img_ulay,
+        None,
+        None,
+        params,
+        'A',
+        0,
+        0,
+        'subj',
+        str(tmp_path),
+        np.array([10, 11, 9, 14, 6]),
+    )
+    _, sagittal_name = extract_snapshot(
+        img_ulay,
+        None,
+        None,
+        params,
+        'S',
+        0,
+        2,
+        'subj',
+        str(tmp_path),
+        np.array([10, 11, 9, 14, 6]),
+    )
+
+    assert axial_name == 'subj_A_0'
+    assert sagittal_name == 'subj_S_2'
 
 
 def test_prep_data_writes_outside_slice_margin_default(tmp_path):

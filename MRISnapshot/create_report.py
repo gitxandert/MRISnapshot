@@ -397,8 +397,8 @@ def _pick_closest_slice(slice_indices, extents, target_extent):
     return int(slice_indices[np.argmin(extent_diff)])
 
 
-def _select_axial_tumor_slices(nz_mask, params):
-    '''Select axial slices around the tumor defined by the mask image.'''
+def _select_mask_centered_slices(nz_mask, params):
+    '''Select slices around the tumor defined by the mask image.'''
 
     slice_extents = np.sum(nz_mask, axis=(0, 1))
     all_slices = np.arange(slice_extents.shape[0])
@@ -429,7 +429,7 @@ def _select_axial_tumor_slices(nz_mask, params):
     outside_below = int(outside_below_candidates[-1]) if outside_below_candidates.size > 0 else None
 
     selected = []
-    for slice_index in [max_slice, above_20, below_20, outside_above, outside_below]:
+    for slice_index in [outside_below, below_20, max_slice, above_20, outside_above]:
         if slice_index is None:
             continue
         if slice_index not in selected:
@@ -461,8 +461,8 @@ def calc_sel_slices(img_ulay, img_mask, img_olay, img_olay2, params, sub_index, 
     if num_nz <= 1:       ## 0 or 1 slice to select
         return sl_sel
 
-    if curr_view == 'A' and img_mask is not None:
-        return _select_axial_tumor_slices(nz_mask, params)
+    if img_mask is not None:
+        return _select_mask_centered_slices(nz_mask, params)
         
     ## Select slices based on params.step_size_slice
     if params.step_size_slice != '':
@@ -550,7 +550,6 @@ def extract_snapshot(img_ulay, img_olay, img_olay2, params, curr_view, curr_slic
     :param sub_id: Id of the current subject
     :param dir_snapshots_full: Output directory for snapshots (full path)
     :param list_sel_slices: List of selected slices
-
     :return snapshot_caption: Caption of the extracted snapshot
     :return snapshot_name: Name of the extracted snapshot
     '''
