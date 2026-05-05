@@ -254,14 +254,16 @@ def copy_js(path_utils, out_dir):
     template_files = ['misc_func.js', 'shortcut.js', 'load_back.js']
     for template_file in template_files:
         src = os.path.join(path_utils, template_file)
+        dst = os.path.join(out_dir, template_file)
         try:
-            shutil.copy(src, out_dir)
+            # ShareDocs and similar mounts can reject metadata-preserving copies.
+            shutil.copyfile(src, dst)
         except Exception as exc:
             sys.exit(
                 "\nERROR: Could not copy template .js file "
                 + src
-                + " to output directory "
-                + out_dir
+                + " to output file "
+                + dst
                 + ": "
                 + str(exc)
                 + '\n'
